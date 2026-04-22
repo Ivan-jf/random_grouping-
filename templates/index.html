@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>随机分组工具</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: #f0f4f8;
+      color: #2d3748;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #2b6cb0 0%, #2c7a7b 100%);
+      color: #fff;
+      padding: 22px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    }
+    header h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: .5px; }
+    header .author { font-size: .85rem; opacity: .85; }
+
+    /* ── Main layout ── */
+    main {
+      max-width: 900px;
+      margin: 36px auto;
+      padding: 0 20px 60px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+      padding: 28px 32px;
+      margin-bottom: 24px;
+    }
+    .card h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #2b6cb0;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #ebf4ff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card h2 .step-badge {
+      background: #2b6cb0;
+      color: #fff;
+      border-radius: 50%;
+      width: 24px; height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .78rem;
+      flex-shrink: 0;
+    }
+
+    /* ── Form elements ── */
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .form-row.single { grid-template-columns: 1fr; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    label {
+      font-size: .85rem;
+      font-weight: 600;
+      color: #4a5568;
+    }
+    label .hint {
+      font-weight: 400;
+      color: #a0aec0;
+      font-size: .78rem;
+      margin-left: 4px;
+    }
+    input[type="text"],
+    input[type="number"],
+    select {
+      border: 1.5px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: .92rem;
+      color: #2d3748;
+      background: #f7fafc;
+      transition: border-color .2s, box-shadow .2s;
+      outline: none;
+      width: 100%;
+    }
+    input:focus, select:focus {
+      border-color: #2b6cb0;
+      box-shadow: 0 0 0 3px rgba(43,108,176,.12);
+      background: #fff;
+    }
+    select option[value=""] { color: #a0aec0; }
+
+    /* ── File upload ── */
+    .upload-area {
+      border: 2px dashed #bee3f8;
+      border-radius: 10px;
+      padding: 28px;
+      text-align: center;
+      cursor: pointer;
+      transition: background .2s, border-color .2s;
+      background: #ebf8ff;
+      position: relative;
+    }
+    .upload-area:hover { background: #e0f0ff; border-color: #2b6cb0; }
+    .upload-area input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .upload-area .icon { font-size: 2rem; margin-bottom: 8px; }
+    .upload-area p { font-size: .9rem; color: #4a5568; }
+    .upload-area .file-name {
+      margin-top: 8px;
+      font-size: .82rem;
+      color: #2b6cb0;
+      font-weight: 600;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 22px;
+      border-radius: 8px;
+      border: none;
+      font-size: .92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(135deg,#2b6cb0,#2c7a7b); color: #fff; }
+    .btn-primary:hover:not(:disabled) { opacity: .9; }
+    .btn-success { background: linear-gradient(135deg,#276749,#2f855a); color: #fff; }
+    .btn-success:hover:not(:disabled) { opacity: .9; }
+    .btn-outline {
+      background: #fff;
+      color: #2b6cb0;
+      border: 1.5px solid #2b6cb0;
+    }
+    .btn-outline:hover { background: #ebf4ff; }
+
+    /* ── Alert ── */
+    .alert {
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: .88rem;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .alert.error   { background: #fff5f5; border-left: 4px solid #fc8181; color: #c53030; }
+    .alert.success { background: #f0fff4; border-left: 4px solid #68d391; color: #276749; }
+    .alert.info    { background: #ebf8ff; border-left: 4px solid #63b3ed; color: #2b6cb0; }
+    .alert.show    { display: block; }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: none;
+      width: 18px; height: 18px;
+      border: 3px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; margin-top: 16px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .88rem;
+    }
+    thead th {
+      background: #ebf4ff;
+      color: #2b6cb0;
+      font-weight: 700;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 2px solid #bee3f8;
+    }
+    tbody tr:nth-child(even) { background: #f7fafc; }
+    tbody td {
+      padding: 8px 14px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #4a5568;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: .78rem;
+      font-weight: 600;
+      background: #bee3f8;
+      color: #2b6cb0;
+    }
+
+    /* ── Result section ── */
+    #result-section { display: none; }
+    .result-meta {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .meta-item {
+      background: #ebf8ff;
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: .88rem;
+      color: #2b6cb0;
+      font-weight: 600;
+    }
+    .meta-item span { font-weight: 400; color: #4a5568; }
+
+    footer {
+      text-align: center;
+      padding: 20px;
+      color: #a0aec0;
+      font-size: .8rem;
+    }
+
+    @media (max-width: 600px) {
+      .form-row { grid-template-columns: 1fr; }
+      header { flex-direction: column; gap: 6px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🔀 随机分组工具</h1>
+  <div class="author">作者：张济甫 &nbsp;|&nbsp; Random Grouping Tool</div>
+</header>
+
+<main>
+
+  <!-- Step 1: Upload -->
+  <div class="card">
+    <h2><span class="step-badge">1</span> 上传数据文件</h2>
+    <div class="upload-area" id="upload-area">
+      <input type="file" id="file-input" accept=".xlsx,.xls" />
+      <div class="icon">📂</div>
+      <p>点击或拖拽上传 Excel 文件（.xlsx / .xls）</p>
+      <div class="file-name" id="file-name-display"></div>
+    </div>
+    <div id="upload-alert" class="alert"></div>
+    <div style="margin-top:14px;">
+      <button class="btn btn-primary" id="upload-btn" onclick="uploadFile()">
+        <span class="spinner" id="upload-spinner"></span>
+        📤 上传并读取列名
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 2: Params -->
+  <div class="card" id="param-card" style="display:none;">
+    <h2><span class="step-badge">2</span> 设置分组参数</h2>
+
+    <div id="param-alert" class="alert"></div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>样品 ID 列 <span class="hint">（唯一标识每行样品）</span></label>
+        <select id="id-col"><option value="">-- 请选择 --</option></select>
+      </div>
+      <div class="form-group">
+        <label>排序变量列 <span class="hint">（按此列降序分块）</span></label>
+        <select id="var-col"><option value="">-- 请选择 --</option></select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>"要不要"筛选列 <span class="hint">（Y 参与 / N 排除，可不选）</span></label>
+        <select id="filter-col"><option value="">-- 不使用此功能 --</option></select>
+      </div>
+      <div class="form-group">
+        <label>每组人数 <span class="hint">（即分组数 group_num）</span></label>
+        <input type="number" id="group-num" min="1" value="2" placeholder="例如：3" />
+      </div>
+    </div>
+
+    <div class="form-row single">
+      <div class="form-group">
+        <label>分组名称 <span class="hint">（英文逗号分隔，例如：A,B,C）</span></label>
+        <input type="text" id="group-names" placeholder="例如：对照组,处理组1,处理组2" />
+      </div>
+    </div>
+
+    <div style="margin-top:8px; padding:12px 14px; background:#fffbeb; border-radius:8px; font-size:.83rem; color:#744210; border-left:3px solid #f6ad55;">
+      💡 <strong>提示：</strong>筛选后 Y 的行数必须等于 <strong>每组人数 × 分组名称数量</strong>
+    </div>
+
+    <div style="margin-top:18px;">
+      <button class="btn btn-primary" id="run-btn" onclick="runGrouping()">
+        <span class="spinner" id="run-spinner"></span>
+        🚀 开始随机分组
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 3: Result -->
+  <div class="card" id="result-section">
+    <h2><span class="step-badge">3</span> 分组结果</h2>
+
+    <div id="result-meta" class="result-meta"></div>
+
+    <h3 style="font-size:.95rem;font-weight:600;color:#4a5568;margin-bottom:8px;">📊 各组统计摘要</h3>
+    <div class="table-wrap" id="summary-table"></div>
+
+    <h3 style="font-size:.95rem;font-weight:600;color:#4a5568;margin:20px 0 8px;">👀 结果预览（前 20 行）</h3>
+    <div class="table-wrap" id="preview-table"></div>
+
+    <div style="margin-top:20px; display:flex; gap:12px; flex-wrap:wrap;">
+      <button class="btn btn-success" id="download-btn" onclick="downloadResult()">
+        ⬇️ 下载完整 Excel 结果
+      </button>
+      <button class="btn btn-outline" onclick="resetAll()">
+        🔄 重新分组
+      </button>
+    </div>
+  </div>
+
+</main>
+
+<footer>Random Grouping Tool &nbsp;·&nbsp; 作者：张济甫 &nbsp;·&nbsp; Powered by Python / Flask</footer>
+
+<script>
+  let uploadedFilepath = null;
+  let resultFilename   = null;
+
+  // ── File input display ──
+  document.getElementById('file-input').addEventListener('change', function() {
+    const name = this.files[0] ? this.files[0].name : '';
+    document.getElementById('file-name-display').textContent = name ? '已选择：' + name : '';
+  });
+
+  function showAlert(id, msg, type) {
+    const el = document.getElementById(id);
+    el.className = 'alert ' + type + ' show';
+    el.textContent = msg;
+  }
+  function hideAlert(id) {
+    document.getElementById(id).className = 'alert';
+  }
+
+  // ── Upload ──
+  async function uploadFile() {
+    const fileInput = document.getElementById('file-input');
+    if (!fileInput.files[0]) {
+      showAlert('upload-alert', '请先选择文件', 'error'); return;
+    }
+    hideAlert('upload-alert');
+    const btn = document.getElementById('upload-btn');
+    const spinner = document.getElementById('upload-spinner');
+    btn.disabled = true; spinner.style.display = 'inline-block';
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    try {
+      const res = await fetch('/get_columns', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.error) { showAlert('upload-alert', data.error, 'error'); return; }
+
+      uploadedFilepath = data.filepath;
+      populateSelects(data.columns);
+      document.getElementById('param-card').style.display = 'block';
+      document.getElementById('result-section').style.display = 'none';
+      showAlert('upload-alert', `✅ 文件读取成功，共 ${data.columns.length} 列`, 'success');
+    } catch(e) {
+      showAlert('upload-alert', '上传失败：' + e.message, 'error');
+    } finally {
+      btn.disabled = false; spinner.style.display = 'none';
+    }
+  }
+
+  function populateSelects(columns) {
+    ['id-col','var-col','filter-col'].forEach(id => {
+      const sel = document.getElementById(id);
+      const isFilter = id === 'filter-col';
+      sel.innerHTML = isFilter
+        ? '<option value="">-- 不使用此功能 --</option>'
+        : '<option value="">-- 请选择 --</option>';
+      columns.forEach(col => {
+        const opt = document.createElement('option');
+        opt.value = col; opt.textContent = col;
+        sel.appendChild(opt);
+      });
+    });
+  }
+
+  // ── Run ──
+  async function runGrouping() {
+    hideAlert('param-alert');
+    const idCol      = document.getElementById('id-col').value;
+    const varCol     = document.getElementById('var-col').value;
+    const filterCol  = document.getElementById('filter-col').value;
+    const groupNum   = document.getElementById('group-num').value;
+    const groupNames = document.getElementById('group-names').value;
+
+    if (!idCol)      { showAlert('param-alert','请选择样品 ID 列','error'); return; }
+    if (!varCol)     { showAlert('param-alert','请选择排序变量列','error'); return; }
+    if (!groupNum || groupNum < 1) { showAlert('param-alert','请输入有效的每组人数','error'); return; }
+    if (!groupNames) { showAlert('param-alert','请输入分组名称','error'); return; }
+
+    const btn = document.getElementById('run-btn');
+    const spinner = document.getElementById('run-spinner');
+    btn.disabled = true; spinner.style.display = 'inline-block';
+
+    try {
+      const res = await fetch('/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filepath: uploadedFilepath,
+          group_num: groupNum,
+          group_names: groupNames,
+          id_col: idCol,
+          var_col: varCol,
+          filter_col: filterCol || null
+        })
+      });
+      const data = await res.json();
+      if (data.error) { showAlert('param-alert', '❌ ' + data.error, 'error'); return; }
+
+      resultFilename = data.out_file;
+      renderResult(data);
+    } catch(e) {
+      showAlert('param-alert', '请求失败：' + e.message, 'error');
+    } finally {
+      btn.disabled = false; spinner.style.display = 'none';
+    }
+  }
+
+  function renderResult(data) {
+    const sec = document.getElementById('result-section');
+    sec.style.display = 'block';
+    sec.scrollIntoView({ behavior: 'smooth' });
+
+    // Meta
+    const names = document.getElementById('group-names').value;
+    document.getElementById('result-meta').innerHTML = `
+      <div class="meta-item">总样品数 <span>${data.total}</span></div>
+      <div class="meta-item">分组数量 <span>${names.split(',').filter(s=>s.trim()).length}</span></div>
+      <div class="meta-item">每组人数 <span>${document.getElementById('group-num').value}</span></div>
+    `;
+
+    // Summary table
+    document.getElementById('summary-table').innerHTML = buildTable(data.summary);
+    // Preview table
+    document.getElementById('preview-table').innerHTML = buildTable(data.preview);
+  }
+
+  function buildTable(rows) {
+    if (!rows || rows.length === 0) return '<p style="color:#a0aec0">暂无数据</p>';
+    const keys = Object.keys(rows[0]);
+    let html = '<table><thead><tr>';
+    keys.forEach(k => html += `<th>${k}</th>`);
+    html += '</tr></thead><tbody>';
+    rows.forEach(row => {
+      html += '<tr>';
+      keys.forEach(k => {
+        const val = row[k];
+        if (k === 'group' || k === '分组') {
+          html += `<td><span class="badge">${val}</span></td>`;
+        } else {
+          html += `<td>${val !== null && val !== undefined ? val : '-'}</td>`;
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function downloadResult() {
+    if (resultFilename) window.location.href = '/download/' + resultFilename;
+  }
+
+  function resetAll() {
+    document.getElementById('result-section').style.display = 'none';
+    document.getElementById('group-names').value = '';
+    document.getElementById('group-num').value = '2';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+</body>
+</html>

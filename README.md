@@ -21,3 +21,4 @@ python app.py
 3. 选择仓库，Build Command: `pip install -r requirements.txt`
 4. Start Command: `gunicorn app:app --bind 0.0.0.0:$PORT`
 5. 部署完成后获得公网 URL
+# random_grouping-

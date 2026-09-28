@@ -61,7 +61,7 @@ test('group presets offer two through eight letter groups and fill the name inpu
   const document = {
     addEventListener() {},
     getElementById(id) {
-      if (!elements.has(id)) elements.set(id, { addEventListener() {}, value: '', hidden: true, setAttribute() {} });
+      if (!elements.has(id)) elements.set(id, { addEventListener() {}, value: '', hidden: true, style: {}, innerHTML: '', querySelectorAll() { return []; }, setAttribute() {} });
       return elements.get(id);
     },
   };
@@ -70,4 +70,30 @@ test('group presets offer two through eight letter groups and fill the name inpu
   vm.runInContext("chooseGroupPreset('A,B,C,D')", context);
   assert.equal(elements.get('group-names').value, 'A,B,C,D');
   assert.equal(elements.get('group-preset-menu').hidden, true);
+  assert.equal(elements.get('group-size-section').style.display, 'block');
+  assert.match(elements.get('group-size-grid').innerHTML, /data-group-name="D"/);
+});
+
+test('custom counts override the default while blank fields keep it', () => {
+  const elements = new Map();
+  const inputs = [
+    {dataset: {groupName: 'A'}, value: '4'},
+    {dataset: {groupName: 'B'}, value: ''},
+    {dataset: {groupName: 'C'}, value: '3'},
+  ];
+  const document = {
+    addEventListener() {},
+    querySelectorAll() { return inputs; },
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, {addEventListener() {}, value: '', setAttribute() {}});
+      return elements.get(id);
+    },
+  };
+  const context = vm.createContext({document});
+  vm.runInContext(script, context);
+  document.getElementById('group-num').value = '2';
+  document.getElementById('group-names').value = 'A,B,C';
+  assert.equal(JSON.stringify(vm.runInContext('collectGroupSizes()', context)), '{"A":4,"C":3}');
+  inputs[0].value = '0';
+  assert.throws(() => vm.runInContext('collectGroupSizes()', context), /正整数/);
 });

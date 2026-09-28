@@ -83,12 +83,67 @@ def select_volume_window(df, start, count):
     return df.iloc[start:start + count].copy()
 
 
-def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None):
+def balance_group_means(labels, volumes, group_sizes, group_names):
+    """交换不同组的标签，缩小各组均值与总体均值的最大偏差。"""
+    count = len(labels)
+    overall_mean = sum(volumes) / count
+    overall_sd = (sum((volume - overall_mean) ** 2 for volume in volumes) / count) ** 0.5
+    acceptable_deviation = overall_sd * 0.05
+    sums = {name: 0.0 for name in group_names}
+    for label, volume in zip(labels, volumes):
+        sums[label] += volume
+
+    def score(group_sums):
+        deviations = [abs(group_sums[name] / group_sizes[name] - overall_mean)
+                      for name in group_names]
+        return max(deviations), sum(value * value for value in deviations)
+
+    current = score(sums)
+    for _ in range(min(60, count * 3)):
+        if current[0] <= acceptable_deviation:
+            break
+        best = None
+        best_score = current
+        if count <= 100:
+            pairs = [(left, right) for left in range(count)
+                     for right in range(left + 1, count) if labels[left] != labels[right]]
+            random.shuffle(pairs)
+        else:
+            pairs = ((random.randrange(count), random.randrange(count)) for _ in range(4000))
+
+        for left, right in pairs:
+            first, second = labels[left], labels[right]
+            if first == second:
+                continue
+            difference = volumes[right] - volumes[left]
+            sums[first] += difference
+            sums[second] -= difference
+            candidate = score(sums)
+            sums[first] -= difference
+            sums[second] += difference
+            if candidate < best_score and (current[0] - candidate[0] > 1e-9 or
+                                           current[1] - candidate[1] > 1e-9):
+                best_score = candidate
+                best = left, right, difference
+
+        if best is None:
+            break
+        left, right, difference = best
+        first, second = labels[left], labels[right]
+        sums[first] += difference
+        sums[second] -= difference
+        labels[left], labels[right] = second, first
+        current = best_score
+    return labels
+
+
+def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None, group_sizes=None):
     """
     随机分组核心逻辑
 
     注意：
-    - group_num: 每组人数
+    - group_num: 默认每组人数
+    - group_sizes: 各组目标人数（可选）
     - group_names: 分组名称列表
     - id_col: 样品 ID 列名
     - var_col: 用于排序分组的变量列名
@@ -106,7 +161,8 @@ def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None
 
     n = len(df)
     group_count = len(group_names)
-    expected = group_num * group_count
+    group_sizes = group_sizes if group_sizes is not None else {name: group_num for name in group_names}
+    expected = sum(group_sizes.values())
 
     duplicated_id_values = df[df[id_col].duplicated(keep=False)][id_col]
     if not duplicated_id_values.empty:
@@ -120,40 +176,48 @@ def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None
 
     if n != expected:
         raise ValueError(
-            f"当前选择的有效行数为 {n}，但 每组人数({group_num}) × 组名数量({group_count}) = {expected}，"
+            f"当前选择的有效行数为 {n}，但各组所需数量合计为 {expected}，"
             f"两者必须相等，请检查数据或参数。"
         )
 
     # 按 var_col 降序排列
     df_sorted = df.sort_values(by=var_col, ascending=False).reset_index(drop=True)
 
-    # 分块：每个区块包含每个组各 1 只动物，所以每块大小 = 组别数量
+    # 相同人数沿用原有分块随机算法；不同人数先按比例分布，再平衡各组均值。
     block_size = group_count
     df_sorted['block'] = [i // block_size + 1 for i in range(n)]
-
-    # 每块内随机排序并分配组名
-    df_sorted['group'] = None
-
-    for block_id in df_sorted['block'].unique():
-        idx = df_sorted[df_sorted['block'] == block_id].index.tolist()
-        shuffled = idx.copy()
-        random.shuffle(shuffled)
-
-        # 每个 block 内，每个组名出现一次
-        names_for_block = group_names[:len(idx)]
-
-        for pos, original_idx in enumerate(shuffled):
-            df_sorted.at[original_idx, 'group'] = names_for_block[pos]
+    if len(set(group_sizes.values())) == 1:
+        labels = [None] * n
+        for start in range(0, n, block_size):
+            indices = list(range(start, start + block_size))
+            random.shuffle(indices)
+            for name, index in zip(group_names, indices):
+                labels[index] = name
+    else:
+        labels = []
+        assigned = {name: 0 for name in group_names}
+        for index in range(n):
+            candidates = [name for name in group_names if assigned[name] < group_sizes[name]]
+            deficits = {name: (index + 1) * group_sizes[name] / n - assigned[name]
+                        for name in candidates}
+            largest = max(deficits.values())
+            chosen = random.choice([name for name in candidates
+                                    if deficits[name] >= largest - 0.25])
+            labels.append(chosen)
+            assigned[chosen] += 1
+        labels = balance_group_means(labels, df_sorted[var_col].tolist(), group_sizes, group_names)
+    df_sorted['group'] = labels
 
     # 统计摘要
     summary_df = df_sorted.groupby('group')[var_col].agg(
+        count='size',
         mean='mean',
         sd='std',
         min='min',
         max='max'
     ).reset_index()
 
-    summary_df.columns = ['分组', '均值', '标准差', '最小值', '最大值']
+    summary_df.columns = ['分组', '只数', '均值', '标准差', '最小值', '最大值']
     summary_df = summary_df.round(4)
 
     return df_sorted, summary_df, df_excluded
@@ -340,11 +404,6 @@ def run():
     data = request.get_json()
 
     filepath = data.get('filepath')
-    try:
-        group_num = int(data.get('group_num'))
-    except (TypeError, ValueError):
-        return jsonify({'error': '请输入有效的每组人数'}), 400
-
     group_names = [g.strip() for g in re.split(r'[,，]', data.get('group_names', '')) if g.strip()]
     id_col = data.get('id_col')
     length_col = data.get('length_col')
@@ -362,21 +421,34 @@ def run():
     if duplicated_group_names:
         return jsonify({'error': f"分组名称不能重复：{'、'.join(duplicated_group_names)}"}), 400
 
+    raw_sizes = data.get('group_sizes') or {}
+    if not isinstance(raw_sizes, dict) or any(name not in group_names for name in raw_sizes):
+        return jsonify({'error': '分组人数与分组名称不匹配，请重新设置'}), 400
+    try:
+        group_num = int(data.get('group_num'))
+        if group_num < 1 or isinstance(data.get('group_num'), bool):
+            raise ValueError
+        group_sizes = {}
+        for name in group_names:
+            raw = raw_sizes.get(name, group_num)
+            if isinstance(raw, bool) or str(raw).strip() != str(int(raw)) or int(raw) < 1:
+                raise ValueError
+            group_sizes[name] = int(raw)
+    except (TypeError, ValueError):
+        return jsonify({'error': '每组人数必须是大于等于 1 的整数'}), 400
+
     if not id_col:
         return jsonify({'error': '请选择样品 ID 列'}), 400
 
     if not length_col or not width_col:
         return jsonify({'error': '缺少长列或宽列'}), 400
 
-    if group_num < 1:
-        return jsonify({'error': '每组人数必须大于等于 1'}), 400
-
     try:
         df = pd.read_excel(filepath)
         source_total = len(df)
         df = add_volume_column(df, length_col, width_col)
         df_sorted = df.sort_values(by='体积', ascending=False).reset_index(drop=True)
-        required_count = group_num * len(group_names)
+        required_count = sum(group_sizes.values())
 
         if required_count > len(df_sorted):
             raise ValueError(f'可用小鼠数量为 {len(df_sorted)}，少于所需的 {required_count} 只。')
@@ -389,6 +461,7 @@ def run():
                 'preview': dataframe_to_records(df_sorted),
                 'source_total': source_total,
                 'required_count': required_count,
+                'group_sizes': group_sizes,
             })
 
         if start_index is None:
@@ -400,7 +473,8 @@ def run():
             group_names=group_names,
             id_col=id_col,
             var_col='体积',
-            filter_col=None
+            filter_col=None,
+            group_sizes=group_sizes,
         )
 
         # 将 group 列移动到最前面；如果有笼号列，则放到 group 后面
@@ -433,7 +507,8 @@ def run():
             'preview_columns': list(df_result_export.columns),
             'source_total': source_total,
             'total': len(df_result_export),
-            'excluded_total': len(df_excluded)
+            'excluded_total': len(df_excluded),
+            'group_sizes': group_sizes,
         })
 
     except ValueError as e:

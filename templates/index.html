@@ -102,6 +102,9 @@
       cursor: pointer;
     }
     .preset-option:hover { background: #ebf4ff; color: #2b6cb0; }
+    .group-size-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:10px; }
+    .group-size-item { padding:10px 12px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:10px; }
+    .group-size-item label { display:block; margin-bottom:6px; overflow-wrap:anywhere; }
 
     label {
       font-size: .85rem;
@@ -404,10 +407,6 @@
         <label>宽列 <span class="hint">已按关键词自动识别</span></label>
         <select id="width-col"><option value="">-- 请选择 --</option></select>
       </div>
-      <div class="form-group">
-        <label>每组人数 <span class="hint">例如每组 8 只，就填 8</span></label>
-        <input type="number" id="group-num" min="1" value="2" placeholder="例如：8" />
-      </div>
     </div>
 
     <div class="form-row single">
@@ -424,6 +423,15 @@
           <button type="button" class="preset-option" data-group-preset="A,B,C,D,E,F,G,H" onclick="chooseGroupPreset('A,B,C,D,E,F,G,H')">8 组：A, B, C, D, E, F, G, H</button>
         </div>
       </div>
+    </div>
+
+    <div class="form-group" style="margin-top:12px; max-width:240px;">
+      <label>默认每组只数 <span class="hint">不单独填写时采用</span></label>
+      <input type="number" id="group-num" min="1" step="1" value="2" placeholder="例如：8" />
+    </div>
+    <div id="group-size-section" style="display:none; margin-top:12px;">
+      <label>各组只数 <span class="hint">可选；留空即使用默认只数</span></label>
+      <div class="group-size-grid" id="group-size-grid"></div>
     </div>
 
     <div style="margin-top:8px; padding:12px 14px; background:#f0f7ff; border-radius:8px; font-size:.83rem; color:#2b4c6f; border-left:3px solid #63b3ed;">
@@ -444,7 +452,7 @@
     <div id="result-meta" class="result-meta"></div>
 
     <div id="range-picker" style="display:none; margin:16px 0; padding:16px; background:#f7fafc; border:1px solid #e2e8f0; border-radius:10px;">
-      <div class="section-title">选择连续范围 <span class="hint">覆盖数量固定为组数 × 每组人数</span></div>
+      <div class="section-title">选择连续范围 <span class="hint">覆盖数量为各组只数之和</span></div>
       <div style="display:flex; align-items:end; gap:12px; flex-wrap:wrap;">
         <div class="form-group" style="max-width:220px;">
           <label>开始序号 <span class="hint">从 1 开始</span></label>
@@ -476,6 +484,7 @@
   let previewColumns = [];
   let requiredCount = 0;
   let selectedStart = 0;
+  let previewSettings = null;
 
   function openGroupPresets() {
     document.getElementById('group-preset-menu').hidden = false;
@@ -490,7 +499,48 @@
   function chooseGroupPreset(value) {
     document.getElementById('group-names').value = value;
     closeGroupPresets();
+    renderGroupSizes();
   }
+
+  function getGroupNames() {
+    return document.getElementById('group-names').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function renderGroupSizes() {
+    const grid = document.getElementById('group-size-grid');
+    const previous = Object.fromEntries([...grid.querySelectorAll('input[data-group-name]')].map(input => [input.dataset.groupName, input.value]));
+    const names = [...new Set(getGroupNames())];
+    document.getElementById('group-size-section').style.display = names.length ? 'block' : 'none';
+    grid.innerHTML = names.map(name => `<div class="group-size-item"><label>${escapeHtml(name)}</label><input type="number" min="1" step="1" data-group-name="${escapeHtml(name)}" placeholder="使用默认值" /></div>`).join('');
+    grid.querySelectorAll('input[data-group-name]').forEach(input => { input.value = previous[input.dataset.groupName] ?? ''; });
+  }
+
+  function collectGroupSizes() {
+    const defaultCount = Number(document.getElementById('group-num').value);
+    if (!Number.isInteger(defaultCount) || defaultCount < 1) throw new Error('请输入有效的默认每组只数');
+    const sizes = {};
+    for (const input of document.querySelectorAll('#group-size-grid input[data-group-name]')) {
+      if (input.value.trim() === '') continue;
+      const count = Number(input.value);
+      if (!Number.isInteger(count) || count < 1) throw new Error(`「${input.dataset.groupName}」的只数必须是正整数`);
+      sizes[input.dataset.groupName] = count;
+    }
+    return sizes;
+  }
+
+  function currentSettings() {
+    return JSON.stringify({
+      filepath: uploadedFilepath,
+      group_num: document.getElementById('group-num').value,
+      group_names: getGroupNames(),
+      group_sizes: collectGroupSizes(),
+      id_col: document.getElementById('id-col').value,
+      length_col: document.getElementById('length-col').value,
+      width_col: document.getElementById('width-col').value
+    });
+  }
+
+  document.getElementById('group-names').addEventListener('input', renderGroupSizes);
 
   document.addEventListener('click', function(event) {
     if (!event.target.closest('.preset-picker')) {
@@ -599,8 +649,10 @@
 
     if (!idCol) { showAlert('param-alert', '请选择样品 ID 列', 'error'); return; }
     if (!lengthCol || !widthCol) { showAlert('param-alert', '请选择长列和宽列', 'error'); return; }
-    if (!groupNum || groupNum < 1) { showAlert('param-alert', '请输入有效的每组人数', 'error'); return; }
     if (!groupNames) { showAlert('param-alert', '请输入分组名称', 'error'); return; }
+    let groupSizes;
+    try { groupSizes = collectGroupSizes(); }
+    catch (e) { showAlert('param-alert', e.message, 'error'); return; }
 
     const btn = document.getElementById('run-btn');
     const spinner = document.getElementById('run-spinner');
@@ -616,6 +668,7 @@
           filepath: uploadedFilepath,
           group_num: groupNum,
           group_names: groupNames,
+          group_sizes: groupSizes,
           id_col: idCol,
           length_col: lengthCol,
           width_col: widthCol,
@@ -631,6 +684,7 @@
       }
 
       renderPreview(data);
+      previewSettings = currentSettings();
     } catch(e) {
       showAlert('param-alert', '请求失败：' + e.message, 'error');
     } finally {
@@ -653,7 +707,7 @@
       <div class="meta-item">原始样品数 <span>${escapeHtml(data.source_total ?? data.total)}</span></div>
       <div class="meta-item">待选择总数 <span>${escapeHtml(requiredCount)}</span></div>
       <div class="meta-item">分组数量 <span>${escapeHtml(names.split(/[,，]/).filter(s => s.trim()).length)}</span></div>
-      <div class="meta-item">每组人数 <span>${escapeHtml(document.getElementById('group-num').value)}</span></div>
+      <div class="meta-item">各组只数 <span>${escapeHtml(Object.entries(data.group_sizes || {}).map(([name, count]) => `${name}: ${count}`).join(' · '))}</span></div>
       <div class="meta-item">当前状态 <span>请选择连续范围</span></div>
     `;
     document.getElementById('summary-table').innerHTML = '';
@@ -706,10 +760,19 @@
   }
 
   async function confirmRange() {
+    let groupSizes;
+    try { groupSizes = collectGroupSizes(); }
+    catch (e) { showAlert('param-alert', e.message, 'error'); return; }
+    if (currentSettings() !== previewSettings) {
+      showAlert('param-alert', '分组参数已更改，请重新点击「生成体积排序」更新选择范围', 'error');
+      document.getElementById('param-card').scrollIntoView({behavior: 'smooth'});
+      return;
+    }
     const body = {
       filepath: uploadedFilepath,
       group_num: document.getElementById('group-num').value,
       group_names: document.getElementById('group-names').value,
+      group_sizes: groupSizes,
       id_col: document.getElementById('id-col').value,
       length_col: document.getElementById('length-col').value,
       width_col: document.getElementById('width-col').value,
@@ -780,6 +843,9 @@
     document.getElementById('range-picker').style.display = 'none';
     document.getElementById('group-names').value = '';
     document.getElementById('group-num').value = '2';
+    document.getElementById('group-size-grid').innerHTML = '';
+    document.getElementById('group-size-section').style.display = 'none';
+    previewSettings = null;
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }

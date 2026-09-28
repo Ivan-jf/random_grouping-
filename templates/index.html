@@ -76,6 +76,33 @@
     .form-row.single { grid-template-columns: 1fr; }
     .form-group { display: flex; flex-direction: column; gap: 6px; }
 
+    .preset-picker { position: relative; }
+    .preset-menu {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 5;
+      display: grid;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid #dbe5f1;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 10px 24px rgba(45,55,72,.14);
+    }
+    .preset-menu[hidden] { display: none; }
+    .preset-option {
+      border: 0;
+      border-radius: 7px;
+      padding: 8px 10px;
+      color: #2d3748;
+      background: #fff;
+      text-align: left;
+      cursor: pointer;
+    }
+    .preset-option:hover { background: #ebf4ff; color: #2b6cb0; }
+
     label {
       font-size: .85rem;
       font-weight: 600;
@@ -384,9 +411,18 @@
     </div>
 
     <div class="form-row single">
-      <div class="form-group">
+      <div class="form-group preset-picker">
         <label>分组名称 <span class="hint">逗号分隔，中英文逗号都可以，例如：PBS,模型组，给药组</span></label>
-        <input type="text" id="group-names" placeholder="例如：PBS,模型组，低剂量组，高剂量组" />
+        <input type="text" id="group-names" placeholder="例如：PBS,模型组，低剂量组，高剂量组" autocomplete="off" aria-controls="group-preset-menu" aria-haspopup="listbox" onfocus="openGroupPresets()" onclick="openGroupPresets()" onkeydown="if(event.key==='Escape') closeGroupPresets()" />
+        <div class="preset-menu" id="group-preset-menu" role="listbox" hidden>
+          <button type="button" class="preset-option" data-group-preset="A,B" onclick="chooseGroupPreset('A,B')">2 组：A, B</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C" onclick="chooseGroupPreset('A,B,C')">3 组：A, B, C</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C,D" onclick="chooseGroupPreset('A,B,C,D')">4 组：A, B, C, D</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C,D,E" onclick="chooseGroupPreset('A,B,C,D,E')">5 组：A, B, C, D, E</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C,D,E,F" onclick="chooseGroupPreset('A,B,C,D,E,F')">6 组：A, B, C, D, E, F</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C,D,E,F,G" onclick="chooseGroupPreset('A,B,C,D,E,F,G')">7 组：A, B, C, D, E, F, G</button>
+          <button type="button" class="preset-option" data-group-preset="A,B,C,D,E,F,G,H" onclick="chooseGroupPreset('A,B,C,D,E,F,G,H')">8 组：A, B, C, D, E, F, G, H</button>
+        </div>
       </div>
     </div>
 
@@ -437,8 +473,30 @@
 <script>
   let uploadedFilepath = null;
   let previewRows = [];
+  let previewColumns = [];
   let requiredCount = 0;
   let selectedStart = 0;
+
+  function openGroupPresets() {
+    document.getElementById('group-preset-menu').hidden = false;
+    document.getElementById('group-names').setAttribute('aria-expanded', 'true');
+  }
+
+  function closeGroupPresets() {
+    document.getElementById('group-preset-menu').hidden = true;
+    document.getElementById('group-names').setAttribute('aria-expanded', 'false');
+  }
+
+  function chooseGroupPreset(value) {
+    document.getElementById('group-names').value = value;
+    closeGroupPresets();
+  }
+
+  document.addEventListener('click', function(event) {
+    if (!event.target.closest('.preset-picker')) {
+      closeGroupPresets();
+    }
+  });
 
   document.getElementById('file-input').addEventListener('change', function() {
     const name = this.files[0] ? this.files[0].name : '';
@@ -587,6 +645,7 @@
     sec.scrollIntoView({ behavior: 'smooth' });
 
     previewRows = data.preview || [];
+    previewColumns = data.columns || [];
     requiredCount = data.required_count;
     const names = document.getElementById('group-names').value;
 
@@ -626,8 +685,17 @@
   }
 
   function renderPreviewTable() {
-    const rows = previewRows.map((row, index) => ({'序号': index + 1, ...row}));
-    document.getElementById('preview-table').innerHTML = buildTable(rows, true);
+    document.getElementById('preview-table').innerHTML = buildTable(addDisplaySequence(previewRows, previewColumns), true);
+  }
+
+  function addDisplaySequence(rows, columns) {
+    return rows.map((row, index) => {
+      const displayRow = {'序号': index + 1};
+      (columns.length ? columns : Object.keys(row)).forEach(column => {
+        displayRow[column === '序号' ? '原始序号' : column] = row[column];
+      });
+      return displayRow;
+    });
   }
 
   function chooseStart(index) {
@@ -661,7 +729,7 @@
   function renderResult(data) {
     document.getElementById('range-picker').style.display = 'none';
     document.getElementById('summary-table').innerHTML = buildTable(data.summary);
-    document.getElementById('preview-table').innerHTML = buildTable(data.preview);
+    document.getElementById('preview-table').innerHTML = buildTable(addDisplaySequence(data.preview, data.preview_columns || []));
     document.getElementById('result-meta').innerHTML += `<div class="meta-item">已完成 <span>${escapeHtml(data.total)} 只</span></div>`;
     document.getElementById('download-btn').href = `/download/${encodeURIComponent(data.out_file)}`;
   }

@@ -1,6 +1,6 @@
 # 随机分组工具 🔀
 
-基于 Python / Flask 的随机分组 Web 应用，作者：**张济甫**
+基于 Python / Flask 的随机分组 Web 应用，作者：**JiFu Zhang**
 
 ## 功能
 - 上传 Excel 文件，自动读取列名

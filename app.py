@@ -423,15 +423,14 @@ def run():
         # 返回前端预览数据
         summary_records = dataframe_to_records(summary_df)
 
-        preview_cols = ['group', id_col, length_col, width_col, '体积', 'block']
-        preview_cols = [c for c in preview_cols if c in df_result_export.columns]
-        preview = dataframe_to_records(df_result_export[preview_cols])
+        preview = dataframe_to_records(df_result_export)
 
         return jsonify({
             'success': True,
             'out_file': out_name,
             'summary': summary_records,
             'preview': preview,
+            'preview_columns': list(df_result_export.columns),
             'source_total': source_total,
             'total': len(df_result_export),
             'excluded_total': len(df_excluded)

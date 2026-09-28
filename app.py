@@ -1,6 +1,7 @@
 import os
 import uuid
 import random
+import re
 import pandas as pd
 from flask import Flask, render_template, request, send_file, jsonify
 from werkzeug.utils import secure_filename
@@ -8,8 +9,9 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['OUTPUT_FOLDER'] = 'outputs'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'uploads')
+app.config['OUTPUT_FOLDER'] = os.path.join(BASE_DIR, 'outputs')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
 # 自动创建必要目录
@@ -41,6 +43,46 @@ def dataframe_to_records(df):
     return records
 
 
+def detect_dimension_columns(columns):
+    """按列名关键词识别唯一的长、宽列。"""
+    length_candidates = [col for col in columns if '长' in str(col)]
+    width_candidates = [col for col in columns if '宽' in str(col)]
+    if not length_candidates:
+        raise ValueError('未找到包含“长”的列，请重新上传并检查列名。')
+    if not width_candidates:
+        raise ValueError('未找到包含“宽”的列，请重新上传并检查列名。')
+    if len(length_candidates) > 1:
+        raise ValueError(f'存在多个长列：{"、".join(map(str, length_candidates))}，请重新上传。')
+    if len(width_candidates) > 1:
+        raise ValueError(f'存在多个宽列：{"、".join(map(str, width_candidates))}，请重新上传。')
+    return length_candidates[0], width_candidates[0]
+
+
+def calculate_volume(length, width):
+    return float(length) * float(width) * float(width) / 2
+
+
+def add_volume_column(df, length_col, width_col):
+    result = df.copy()
+    lengths = pd.to_numeric(result[length_col], errors='coerce')
+    widths = pd.to_numeric(result[width_col], errors='coerce')
+    if lengths.isna().any() or widths.isna().any():
+        raise ValueError(f'“{length_col}”和“{width_col}”列必须全部是有效数字。')
+    result['体积'] = (lengths * widths * widths / 2).round(2)
+    return result
+
+
+def select_volume_window(df, start, count):
+    try:
+        start = int(start)
+        count = int(count)
+    except (TypeError, ValueError):
+        raise ValueError('选择范围必须是有效数字。')
+    if count < 1 or start < 0 or start + count > len(df):
+        raise ValueError(f'选择范围无效：需要连续选择 {count} 只小鼠。')
+    return df.iloc[start:start + count].copy()
+
+
 def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None):
     """
     随机分组核心逻辑
@@ -50,7 +92,7 @@ def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None
     - group_names: 分组名称列表
     - id_col: 样品 ID 列名
     - var_col: 用于排序分组的变量列名
-    - filter_col: "要不要"列名，只取 Y 的行，可选
+    - filter_col: 保留的兼容参数，当前流程不再筛选行
     """
 
     if id_col not in df.columns:
@@ -59,24 +101,26 @@ def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None
     if var_col not in df.columns:
         raise ValueError(f"排序变量列不存在：{var_col}")
 
-    if filter_col and filter_col not in df.columns:
-        raise ValueError(f"筛选列不存在：{filter_col}")
-
-    # 过滤"要不要"列
-    if filter_col and filter_col in df.columns:
-        df_excluded = df[df[filter_col].astype(str).str.strip().str.upper() != 'Y'].copy()
-        df = df[df[filter_col].astype(str).str.strip().str.upper() == 'Y'].copy()
-        df = df.reset_index(drop=True)
-    else:
-        df_excluded = pd.DataFrame()
+    df_excluded = df.iloc[0:0].copy()
+    df_excluded['未参与原因'] = '未选择筛选列'
 
     n = len(df)
     group_count = len(group_names)
     expected = group_num * group_count
 
+    duplicated_id_values = df[df[id_col].duplicated(keep=False)][id_col]
+    if not duplicated_id_values.empty:
+        duplicate_preview = duplicated_id_values.drop_duplicates().head(10).tolist()
+        duplicate_text = '、'.join(str(v) for v in duplicate_preview)
+        more_text = ' 等' if duplicated_id_values.nunique(dropna=False) > len(duplicate_preview) else ''
+        raise ValueError(
+            f"样品 ID 列「{id_col}」存在重复值：{duplicate_text}{more_text}。"
+            "请先处理重复 ID 后再分组，确保每个样品都有唯一标识。"
+        )
+
     if n != expected:
         raise ValueError(
-            f"筛选后有效行数为 {n}，但 每组人数({group_num}) × 组名数量({group_count}) = {expected}，"
+            f"当前选择的有效行数为 {n}，但 每组人数({group_num}) × 组名数量({group_count}) = {expected}，"
             f"两者必须相等，请检查数据或参数。"
         )
 
@@ -115,28 +159,33 @@ def random_grouping(df, group_num, group_names, id_col, var_col, filter_col=None
     return df_sorted, summary_df, df_excluded
 
 
-def move_group_after_id(df, id_col, group_col='group'):
-    """将 group 组别列移动到 ID 列后面"""
+def move_export_columns(df, group_col='group', cage_col='笼号'):
+    """将 group 放到第一列；如果存在笼号列，则放到 group 后面。"""
     cols = list(df.columns)
 
-    if id_col not in cols or group_col not in cols:
+    if group_col not in cols:
         return df
 
     cols.remove(group_col)
-    id_index = cols.index(id_col)
-    cols.insert(id_index + 1, group_col)
+    cols.insert(0, group_col)
+
+    if cage_col in cols:
+        cols.remove(cage_col)
+        cols.insert(1, cage_col)
 
     return df[cols]
 
 
-def apply_group_row_colors(ws, group_col_name='group'):
-    """根据 group 列给 Excel 每一行填充不同颜色"""
+def apply_group_row_colors(ws, group_col_name='group', cage_col_name='笼号'):
+    """根据 group 给整行填浅色；如果有笼号列，再按笼号给该单元格填深色。"""
     headers = [cell.value for cell in ws[1]]
 
     if group_col_name not in headers:
         return
 
     group_col_idx = headers.index(group_col_name) + 1
+    cage_col_idx = headers.index(cage_col_name) + 1 if cage_col_name in headers else None
+    volume_col_idx = headers.index('体积') + 1 if '体积' in headers else None
 
     colors = [
         "D9EAF7",  # 浅蓝
@@ -153,8 +202,23 @@ def apply_group_row_colors(ws, group_col_name='group'):
         "FDEBD0",  # 浅橙
     ]
 
+    cage_colors = [
+        "1F4E79",  # 深蓝
+        "375623",  # 深绿
+        "7F6000",  # 深金
+        "7030A0",  # 深紫
+        "833C0C",  # 深棕
+        "C00000",  # 深红
+        "0F6B78",  # 深青
+        "404040",  # 深灰
+        "5B2C6F",  # 暗紫
+        "145A32",  # 暗绿
+    ]
+
     group_fill_map = {}
+    cage_fill_map = {}
     color_index = 0
+    cage_color_index = 0
 
     # 设置表头样式
     header_fill = PatternFill(fill_type="solid", fgColor="2B6CB0")
@@ -166,7 +230,9 @@ def apply_group_row_colors(ws, group_col_name='group'):
         cell.font = header_font
         cell.alignment = header_alignment
 
-    # 给每个组别分配颜色
+    cage_font = Font(color="FFFFFF", bold=True)
+
+    # 给每个组别分配浅色；笼号列按笼号值额外分配深色
     for row_idx in range(2, ws.max_row + 1):
         group_value = ws.cell(row=row_idx, column=group_col_idx).value
 
@@ -186,6 +252,29 @@ def apply_group_row_colors(ws, group_col_name='group'):
                 vertical="center",
                 wrap_text=True
             )
+
+        if volume_col_idx:
+            ws.cell(row=row_idx, column=volume_col_idx).number_format = '0.00'
+
+        if cage_col_idx:
+            cage_cell = ws.cell(row=row_idx, column=cage_col_idx)
+            cage_value = cage_cell.value
+
+            if cage_value is not None and str(cage_value).strip() != "":
+                if cage_value not in cage_fill_map:
+                    cage_fill_map[cage_value] = PatternFill(
+                        fill_type="solid",
+                        fgColor=cage_colors[cage_color_index % len(cage_colors)]
+                    )
+                    cage_color_index += 1
+
+                cage_cell.fill = cage_fill_map[cage_value]
+                cage_cell.font = cage_font
+                cage_cell.alignment = Alignment(
+                    horizontal="center",
+                    vertical="center",
+                    wrap_text=True
+                )
 
     # 冻结首行
     ws.freeze_panes = "A2"
@@ -237,7 +326,11 @@ def get_columns():
     try:
         df = pd.read_excel(save_path)
         columns = df.columns.tolist()
-        return jsonify({'columns': columns, 'filepath': save_path})
+        length_col, width_col = detect_dimension_columns(columns)
+        return jsonify({'columns': columns, 'filepath': save_path,
+                        'length_col': length_col, 'width_col': width_col})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -247,11 +340,17 @@ def run():
     data = request.get_json()
 
     filepath = data.get('filepath')
-    group_num = int(data.get('group_num'))
-    group_names = [g.strip() for g in data.get('group_names', '').split(',') if g.strip()]
+    try:
+        group_num = int(data.get('group_num'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '请输入有效的每组人数'}), 400
+
+    group_names = [g.strip() for g in re.split(r'[,，]', data.get('group_names', '')) if g.strip()]
     id_col = data.get('id_col')
-    var_col = data.get('var_col')
-    filter_col = data.get('filter_col') or None
+    length_col = data.get('length_col')
+    width_col = data.get('width_col')
+    start_index = data.get('start_index')
+    preview_only = bool(data.get('preview_only'))
 
     if not filepath or not os.path.exists(filepath):
         return jsonify({'error': '找不到上传的文件，请重新上传'}), 400
@@ -259,29 +358,53 @@ def run():
     if not group_names:
         return jsonify({'error': '请输入分组名称'}), 400
 
+    duplicated_group_names = sorted({name for name in group_names if group_names.count(name) > 1})
+    if duplicated_group_names:
+        return jsonify({'error': f"分组名称不能重复：{'、'.join(duplicated_group_names)}"}), 400
+
     if not id_col:
         return jsonify({'error': '请选择样品 ID 列'}), 400
 
-    if not var_col:
-        return jsonify({'error': '请选择排序变量列'}), 400
+    if not length_col or not width_col:
+        return jsonify({'error': '缺少长列或宽列'}), 400
 
     if group_num < 1:
         return jsonify({'error': '每组人数必须大于等于 1'}), 400
 
     try:
         df = pd.read_excel(filepath)
+        source_total = len(df)
+        df = add_volume_column(df, length_col, width_col)
+        df_sorted = df.sort_values(by='体积', ascending=False).reset_index(drop=True)
+        required_count = group_num * len(group_names)
 
+        if required_count > len(df_sorted):
+            raise ValueError(f'可用小鼠数量为 {len(df_sorted)}，少于所需的 {required_count} 只。')
+
+        if preview_only:
+            return jsonify({
+                'success': True,
+                'mode': 'preview',
+                'columns': list(df_sorted.columns),
+                'preview': dataframe_to_records(df_sorted),
+                'source_total': source_total,
+                'required_count': required_count,
+            })
+
+        if start_index is None:
+            return jsonify({'error': '请选择连续的小鼠范围'}), 400
+        selected_df = select_volume_window(df_sorted, start_index, required_count)
         df_result, summary_df, df_excluded = random_grouping(
-            df=df,
+            df=selected_df,
             group_num=group_num,
             group_names=group_names,
             id_col=id_col,
-            var_col=var_col,
-            filter_col=filter_col
+            var_col='体积',
+            filter_col=None
         )
 
-        # 将 group 列移动到 ID 列后面
-        df_result_export = move_group_after_id(df_result, id_col, group_col='group')
+        # 将 group 列移动到最前面；如果有笼号列，则放到 group 后面
+        df_result_export = move_export_columns(df_result, group_col='group', cage_col='笼号')
 
         # 保存结果
         out_name = 'result_' + str(uuid.uuid4())[:8] + '.xlsx'
@@ -291,8 +414,7 @@ def run():
             df_result_export.to_excel(writer, sheet_name='分组结果', index=False)
             summary_df.to_excel(writer, sheet_name='统计摘要', index=False)
 
-            if not df_excluded.empty:
-                df_excluded.to_excel(writer, sheet_name='未参与样本', index=False)
+            df_excluded.to_excel(writer, sheet_name='未参与样本', index=False)
 
             # 给“分组结果”sheet 按组别上色
             ws = writer.sheets['分组结果']
@@ -301,23 +423,18 @@ def run():
         # 返回前端预览数据
         summary_records = dataframe_to_records(summary_df)
 
-        preview_cols = [id_col, 'group', var_col, 'block']
+        preview_cols = ['group', id_col, length_col, width_col, '体积', 'block']
         preview_cols = [c for c in preview_cols if c in df_result_export.columns]
-        preview = dataframe_to_records(df_result_export[preview_cols].head(20))
-
-        # 返回完整结果数据，用于现场分笼交互面板
-        result_rows = dataframe_to_records(df_result_export)
+        preview = dataframe_to_records(df_result_export[preview_cols])
 
         return jsonify({
             'success': True,
             'out_file': out_name,
             'summary': summary_records,
             'preview': preview,
+            'source_total': source_total,
             'total': len(df_result_export),
-            'result_columns': df_result_export.columns.tolist(),
-            'result_rows': result_rows,
-            'id_col': id_col,
-            'group_col': 'group'
+            'excluded_total': len(df_excluded)
         })
 
     except ValueError as e:
